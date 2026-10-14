@@ -172,6 +172,7 @@ Ranked; detail and the full milestone table in [docs/roadmap.md](docs/roadmap.md
 
 ## Progress log
 
+- **2026-10-14 (M9, trust lists, #622):** A signer can be trusted through a list of CA certificates the user loads from a file (`sign_trust eu_trusted_list`: DER one after the other or PEM), kept apart from their own trusted certificates (`TrustStore::lists`) and off until loaded; nothing is embedded. The details name the list that vouched; chains through it still need CA certificates all the way (#620), and a list never vouches for a time-stamp authority, so trusted time still comes from the user's own certificates. A cut-short list is refused instead of loading as a smaller one, and PEM that starts with text beginning with a `0` is read as PEM. `sign_trust` checks every argument before it changes anything and revalidates the open documents once (`Session::update_trust`). Missing: building the EU Trusted Lists file (a follow-up xtask), qualified time-stamp services, a UI switch and keeping the choice between sessions. Overall estimate unchanged.
 - **2026-10-19 (M14, #3373):** The main menu and its long submenus scroll in short windows, keeping their commands reachable. Estimates unchanged.
 
 - **2026-10-19 (M3, #3387):** Save-prompt shortcuts yield to later consent and utility dialogs; a synthetic UI regression checks that an edited document stays open. Estimates unchanged.
