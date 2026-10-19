@@ -157,40 +157,53 @@ pub fn data_path(tpl: &Template, data: Option<&DataNode>, som: &str) -> Option<D
 /// Most paths a [`Binder`] remembers, and most data nodes it indexes by name.
 const MAX_MEMO: usize = 100_000;
 const MAX_NAME_INDEX: usize = 200_000;
+/// Most bytes of paths a [`NameIndex`] holds. Every entry clones the names of its ancestors,
+/// so a small packet with a deep chain of long names would multiply into far more than itself.
+const MAX_NAME_INDEX_BYTES: usize = 32 << 20;
 
 /// Every data node's path by element name, in document order, for `global` bindings and `..`
 /// searches: built once, where a walk per object would cost the form times the data.
-struct NameIndex {
-    by_name: HashMap<String, Vec<DataPath>>,
-    /// Every node is in; past [`MAX_NAME_INDEX`] the rest are found by walking.
-    complete: bool,
+pub(crate) struct NameIndex {
+    pub(crate) by_name: HashMap<String, Vec<DataPath>>,
+    /// Every node is in; past [`MAX_NAME_INDEX`] entries or [`MAX_NAME_INDEX_BYTES`] the rest
+    /// are found by walking.
+    pub(crate) complete: bool,
 }
 
 impl NameIndex {
-    /// Every node under `data` by name, in document order, up to [`MAX_NAME_INDEX`] of them.
-    fn build(data: &DataNode) -> NameIndex {
-        /// Adds `n`'s children to `out`, depth first; `count` is how many are in so far.
-        fn walk(n: &DataNode, path: &mut DataPath, out: &mut NameIndex, count: &mut usize, depth: usize) {
+    /// Every node under `data` by name, in document order, up to [`MAX_NAME_INDEX`] of them
+    /// and [`MAX_NAME_INDEX_BYTES`] of path.
+    pub(crate) fn build(data: &DataNode) -> NameIndex {
+        /// Entries so far and the bytes of path they hold.
+        struct Spent {
+            entries: usize,
+            bytes: usize,
+        }
+        /// Adds `n`'s children to `out`, depth first. `path_bytes` is what the path to `n`
+        /// costs, so what one more entry under it costs is known before it is cloned.
+        fn walk(n: &DataNode, path: &mut DataPath, path_bytes: usize, out: &mut NameIndex, spent: &mut Spent, depth: usize) {
             if depth > MAX_DEPTH {
                 return;
             }
             let mut seen: HashMap<&str, usize> = HashMap::new();
             for c in &n.children {
-                if *count >= MAX_NAME_INDEX {
+                let cost = path_bytes.saturating_add(c.name.len()).saturating_add(std::mem::size_of::<(String, usize)>());
+                if spent.entries >= MAX_NAME_INDEX || spent.bytes.saturating_add(cost) > MAX_NAME_INDEX_BYTES {
                     out.complete = false;
                     return;
                 }
-                *count += 1;
+                spent.entries += 1;
+                spent.bytes = spent.bytes.saturating_add(cost);
                 let i = seen.entry(c.name.as_str()).or_insert(0);
                 path.push((c.name.clone(), *i));
                 *i += 1;
                 out.by_name.entry(c.name.clone()).or_default().push(path.clone());
-                walk(c, path, out, count, depth + 1);
+                walk(c, path, cost, out, spent, depth + 1);
                 path.pop();
             }
         }
         let mut out = NameIndex { by_name: HashMap::new(), complete: true };
-        walk(data, &mut DataPath::new(), &mut out, &mut 0, 0);
+        walk(data, &mut DataPath::new(), 0, &mut out, &mut Spent { entries: 0, bytes: 0 }, 0);
         out
     }
 }

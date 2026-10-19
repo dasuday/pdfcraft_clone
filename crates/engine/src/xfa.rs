@@ -21,6 +21,8 @@ use crate::js::Request;
 const MAX_SCRIPTS_PER_EVENT: usize = 2_000;
 /// Most times the form is laid out again for one event (a script adding rows in a loop).
 const MAX_RELAYOUTS_PER_EVENT: usize = 50;
+/// Most data paths a runner remembers for one event.
+const MAX_CACHED_PATHS: usize = 100_000;
 /// Most message boxes, console lines and errors kept for one event.
 const MAX_ALERTS_PER_EVENT: usize = 100;
 const MAX_CONSOLE_PER_EVENT: usize = 1_000;
@@ -280,6 +282,10 @@ struct Runner<'a, 'b> {
     by_som: Option<HashMap<String, String>>,
     /// Widget names by the data node they bind to (built with `by_som`).
     by_path: Option<HashMap<pdfcraft_xfa::DataPath, Vec<String>>>,
+    /// The data node of each object a value went to, by SOM path: resolving one builds a
+    /// binder, and a `global` binding indexes the data, so one event's many values share it.
+    /// Cleared whenever the data's structure changes.
+    paths: HashMap<String, Option<pdfcraft_xfa::DataPath>>,
     fields: Option<HashMap<String, FieldInfo>>,
     /// The live form as last built; dropped when a script changed the form.
     cached: Option<LiveForm>,
@@ -312,6 +318,7 @@ impl<'a, 'b> Runner<'a, 'b> {
             field_changes: Default::default(),
             by_som: None,
             by_path: None,
+            paths: HashMap::new(),
             fields: None,
             cached: None,
             session: None,
@@ -426,6 +433,7 @@ impl<'a, 'b> Runner<'a, 'b> {
     fn data_op(&mut self, op: pdfcraft_xfa::DataOp) {
         self.data.get_or_insert_with(Default::default).apply(&op);
         self.pending.push(op);
+        self.paths.clear();
         self.invalidate();
     }
 
@@ -435,7 +443,16 @@ impl<'a, 'b> Runner<'a, 'b> {
     fn set_value(&mut self, som: &str, value: &str) -> bool {
         use pdfcraft_forms::FieldKind as K;
         // A field bound to no data node (`bind match="none"`) is the only widget its value goes to.
-        let path = pdfcraft_xfa::data_path(self.tpl, self.data.as_ref(), som);
+        let path = match self.paths.get(som) {
+            Some(p) => p.clone(),
+            None => {
+                let p = pdfcraft_xfa::data_path(self.tpl, self.data.as_ref(), som);
+                if self.paths.len() < MAX_CACHED_PATHS {
+                    self.paths.insert(som.to_string(), p.clone());
+                }
+                p
+            }
+        };
         let names = match &path {
             Some(path) => self.widgets_at(path),
             None => self.by_som().get(som).cloned().into_iter().collect(),
@@ -546,6 +563,7 @@ impl<'a, 'b> Runner<'a, 'b> {
         if wrote {
             // What the packet now holds (a value it could not take is reported above).
             self.data = pdfcraft_xfa::data_of(self.doc);
+            self.paths.clear();
             self.invalidate();
         }
         Ok(())

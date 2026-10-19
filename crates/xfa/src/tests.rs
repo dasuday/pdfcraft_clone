@@ -2379,6 +2379,43 @@ fn removing_an_instance_renumbers_the_overrides_after_it() {
     assert!(!ov.remove_instance("x", "y", 0));
 }
 
+/// The name index clones every ancestor's name into each entry, so a small packet with a deep
+/// chain of long names would multiply into gigabytes: the index stops at its byte budget, and a
+/// `global` binding past it still finds its node by walking.
+#[test]
+fn the_name_index_stops_at_its_byte_budget_and_bindings_still_resolve() {
+    // 16 ancestors of 20 000 bytes each, then 300 leaves: 320 KB of path per leaf entry.
+    let names: Vec<String> = (0..16).map(|i| format!("a{i}{}", "x".repeat(20_000))).collect();
+    let mut data = String::from("<form>");
+    for n in &names {
+        data.push_str(&format!("<{n}>"));
+    }
+    for i in 0..300 {
+        data.push_str(&format!("<leaf{i}>v{i}</leaf{i}>"));
+    }
+    for n in names.iter().rev() {
+        data.push_str(&format!("</{n}>"));
+    }
+    data.push_str("</form>");
+    let xml = template_with_data(1, &data);
+    let parsed = parse_datasets(&xml).unwrap();
+    let idx = crate::data::NameIndex::build(&parsed);
+    let entries: usize = idx.by_name.values().map(Vec::len).sum();
+    assert!(!idx.complete, "the index took every node: {entries} entries");
+    assert!(entries < 150, "{entries} entries indexed");
+    // A field bound `global` to the last leaf finds it past the index.
+    let tpl_xml = template(1).replace(
+        r#"<field name="familyName""#,
+        r#"<field name="leaf299" w="1in" h="0.3in"><ui><textEdit/></ui><bind match="global"/></field><field name="familyName""#,
+    );
+    assert!(tpl_xml.contains("leaf299"), "the fixture was reshaped");
+    let (tpl, _) = parse(&tpl_xml).unwrap();
+    let path = crate::data::Binder::new(&tpl, Some(&parsed)).path("form[0].head[0].leaf299[0]").expect("resolves");
+    assert_eq!(path.len(), 18, "{path:?}");
+    assert_eq!(path.last().map(|(n, i)| (n.as_str(), *i)), Some(("leaf299", 0)));
+    assert_eq!(parsed.text_at(&path), Some("v299"));
+}
+
 /// One `Binder` per layout: many fields bound `global` cost one walk of the data between
 /// them, not one each.
 #[test]
