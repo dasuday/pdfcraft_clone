@@ -171,7 +171,7 @@ Ranked; detail and the full milestone table in [docs/roadmap.md](docs/roadmap.md
 | 8 | 1.0 polish: performance, right-to-left, missing languages, keyboard-only (M14) | 55–95 |
 
 ## Progress log
-- **2026-10-19 (M14, macOS association recovery candidate):** Successful desktop open/save can reapply an existing per-file binding to the running PDFCraft bundle through NSWorkspace. Explicit document saves preserve destination opening metadata; bounded reads, file-identity checks and staged-copy failures have regressions. Preview TEST-signature workflows recovered Finder opening on macOS 27.0.1; other macOS versions remain unqualified. Estimates unchanged.
+- **2026-10-19 (M14, macOS association recovery candidate):** Successful desktop open/save/sign can queue recovery of an existing per-file binding to the running PDFCraft bundle through NSWorkspace. Explicit document saves preserve destination opening metadata; length-probed reads, file-identity checks and staged-copy failures have regressions. Review follow-up distinguishes metadata-only watcher events from actual content edits and keeps unreadable xattrs best effort. Preview TEST-signature workflows recovered Finder opening on macOS 27.0.1; other macOS versions remain unqualified. Estimates unchanged.
 
 - **2026-10-19 (M14, #3373):** The main menu and its long submenus scroll in short windows, keeping their commands reachable. Estimates unchanged.
 
