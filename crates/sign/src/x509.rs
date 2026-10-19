@@ -565,7 +565,10 @@ pub fn load_certificates(bytes: &[u8]) -> Result<Vec<Certificate>, SignError> {
     let mut block: Option<String> = None;
     for line in text.lines().map(str::trim) {
         if line == "-----BEGIN CERTIFICATE-----" {
-            block = Some(String::new());
+            // A block that begins before the last one ended is a file cut short or spliced.
+            if block.replace(String::new()).is_some() {
+                return Err(SignError::Malformed("a PEM certificate block is not closed".into()));
+            }
         } else if line == "-----END CERTIFICATE-----" {
             if let Some(b) = block.take() {
                 out.push(Certificate::parse(&base64(&b).ok_or_else(|| SignError::Malformed("PEM base64".into()))?)?);
@@ -573,6 +576,10 @@ pub fn load_certificates(bytes: &[u8]) -> Result<Vec<Certificate>, SignError> {
         } else if let Some(b) = block.as_mut() {
             b.push_str(line);
         }
+    }
+    // Certificates before a block that never ends are not a smaller bundle: the file is damaged.
+    if block.is_some() {
+        return Err(SignError::Malformed("a PEM certificate block is not closed".into()));
     }
     if out.is_empty() {
         return Err(SignError::Malformed("no certificate found (expected DER or PEM)".into()));
