@@ -2440,3 +2440,4 @@ animation effects	Off	Ανενεργά
 	Make properties default	Ορισμός ιδιοτήτων ως προεπιλογή
 	Pages selected	Επιλεγμένες σελίδες
 	Page properties	Ιδιότητες σελίδας
+	macOS Spotlight may intercept {key}. Change its shortcut in System Settings → Keyboard → Keyboard Shortcuts → Spotlight.	Το Spotlight στο macOS μπορεί να δεσμεύει το {key}. Αλλάξτε τη συντόμευσή του στις Ρυθμίσεις συστήματος → Πληκτρολόγιο → Συντομεύσεις πληκτρολογίου → Spotlight.

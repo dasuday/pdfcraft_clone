@@ -2435,3 +2435,4 @@ animation effects	Off	Aus
 	Make properties default	Eigenschaften als Standard festlegen
 	Pages selected	Ausgewählte Seiten
 	Page properties	Seiteneigenschaften
+	macOS Spotlight may intercept {key}. Change its shortcut in System Settings → Keyboard → Keyboard Shortcuts → Spotlight.	Spotlight unter macOS kann {key} abfangen. Ändere den Kurzbefehl unter Systemeinstellungen → Tastatur → Tastaturkurzbefehle → Spotlight.

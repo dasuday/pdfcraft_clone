@@ -2434,3 +2434,4 @@ animation effects	Off	Désactivés
 	Make properties default	Définir comme propriétés par défaut
 	Pages selected	Pages sélectionnées
 	Page properties	Propriétés de la page
+	macOS Spotlight may intercept {key}. Change its shortcut in System Settings → Keyboard → Keyboard Shortcuts → Spotlight.	Spotlight sous macOS peut intercepter {key}. Modifiez son raccourci dans Réglages Système → Clavier → Raccourcis clavier → Spotlight.

@@ -2685,3 +2685,5 @@ key	Space	Tarpas
 	The password must have at least 6 characters.	Slaptažodį turi sudaryti bent 6 simboliai.
 	This file changed on disk. Reload it to see the new version; your unsaved changes will be lost.	Šis failas diske pasikeitė. Įkelkite jį iš naujo, kad pamatytumėte naują versiją; neįrašyti pakeitimai bus prarasti.
 theme	Appearance	Išvaizda
+# AI-assisted Spotlight help addition (2026-10-19), not separately native-reviewed.
+	macOS Spotlight may intercept {key}. Change its shortcut in System Settings → Keyboard → Keyboard Shortcuts → Spotlight.	„macOS“ sistemos „Spotlight“ gali perimti {key}. Pakeiskite jo spartųjį klavišą skiltyje Sistemos nuostatos → Klaviatūra → Spartieji klavišai → Spotlight.
