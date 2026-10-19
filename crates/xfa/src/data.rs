@@ -63,6 +63,8 @@ impl DataNode {
     /// The path of the `nth` node named `name` below this one, in document order (a `global`
     /// binding, or `a..b`).
     pub fn find_named(&self, name: &str, nth: usize) -> Option<DataPath> {
+        /// Counts down `left` over the nodes named `name` under `n`, in document order; true
+        /// once the wanted one is reached, with `path` leading to it. `budget` caps the walk.
         fn walk(n: &DataNode, name: &str, left: &mut usize, path: &mut DataPath, depth: usize, budget: &mut u32) -> bool {
             if depth > MAX_DEPTH {
                 return false;
@@ -165,7 +167,9 @@ struct NameIndex {
 }
 
 impl NameIndex {
+    /// Every node under `data` by name, in document order, up to [`MAX_NAME_INDEX`] of them.
     fn build(data: &DataNode) -> NameIndex {
+        /// Adds `n`'s children to `out`, depth first; `count` is how many are in so far.
         fn walk(n: &DataNode, path: &mut DataPath, out: &mut NameIndex, count: &mut usize, depth: usize) {
             if depth > MAX_DEPTH {
                 return;
@@ -202,6 +206,8 @@ pub struct Binder<'a> {
 }
 
 impl<'a> Binder<'a> {
+    /// A binder over `tpl` and `data`, remembering nothing yet: paths are memoized and the data
+    /// indexed by name on first use.
     pub fn new(tpl: &'a Template, data: Option<&'a DataNode>) -> Self {
         Binder { tpl, data, memo: Default::default(), index: Default::default() }
     }
@@ -235,6 +241,8 @@ impl<'a> Binder<'a> {
         d.count(&path, &last)
     }
 
+    /// [`Self::path`] without the memo: walks `som` segment by segment through the template,
+    /// following each object's binding.
     fn resolve(&self, som: &str) -> Option<DataPath> {
         let tpl = self.tpl;
         let mut out = DataPath::new();

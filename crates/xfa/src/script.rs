@@ -84,6 +84,35 @@ impl Overrides {
     pub fn is_empty(&self) -> bool {
         self.presence.is_empty() && self.access.is_empty() && self.values.is_empty()
     }
+
+    /// Instance `index` of the repeating subform `name` under `parent_som` was taken out of
+    /// the data: its overrides go with it, and those on the instances after it are renumbered,
+    /// as the data's siblings shift down by one. Returns whether anything changed.
+    pub fn remove_instance(&mut self, parent_som: &str, name: &str, index: usize) -> bool {
+        let Some(prefix) = child_som(parent_som, Some(name), 0).strip_suffix("[0]").map(|p| format!("{p}[")) else { return false };
+        let mut changed = false;
+        for map in [&mut self.presence, &mut self.access, &mut self.values] {
+            // (instance, what follows its index, key), lowest instance first: moving one down
+            // lands on a key already moved or removed, never on one still to do.
+            let mut keys: Vec<(usize, String, String)> = map
+                .keys()
+                .filter_map(|k| {
+                    let (n, tail) = k.get(prefix.len()..)?.split_once(']')?;
+                    let i = n.parse::<usize>().ok().filter(|_| k.starts_with(&prefix) && (tail.is_empty() || tail.starts_with('.')))?;
+                    (i >= index).then(|| (i, tail.to_string(), k.clone()))
+                })
+                .collect();
+            keys.sort();
+            for (i, tail, key) in keys {
+                let Some(v) = map.remove(&key) else { continue };
+                changed = true;
+                if i > index {
+                    map.insert(format!("{prefix}{}]{tail}", i - 1), v);
+                }
+            }
+        }
+        changed
+    }
 }
 
 /// Most bytes of an unbound field's value kept (a field value's own cap).
@@ -174,6 +203,8 @@ pub fn set_overrides(doc: &mut Document, ov: &Overrides) -> Result<(), XfaError>
     Ok(())
 }
 
+/// The SOM path of the child `name` at index `index` under `parent` (`parent.name[index]`); a
+/// nameless child is transparent and shares its parent's.
 pub(crate) fn child_som(parent: &str, name: Option<&str>, index: usize) -> String {
     match name {
         Some(n) if !parent.is_empty() => format!("{parent}.{n}[{index}]"),
@@ -652,6 +683,7 @@ pub fn template_node<'a>(tpl: &'a Template, som: &str) -> Option<&'a Node> {
 /// Give the field at `som` (one bound to no data node) the value `value` in `live`, as
 /// [`form_tree`] would show it from the overrides. `None`: not a plain field the tree holds.
 pub fn set_unbound_value(live: &mut FormNode, tpl: &Template, som: &str, value: &str) -> Option<bool> {
+    /// The node at `som` under `n`, down the one branch whose SOM leads there.
     fn find<'a>(n: &'a mut FormNode, som: &str, depth: usize) -> Option<&'a mut FormNode> {
         if n.som == som {
             return Some(n);

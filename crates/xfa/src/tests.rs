@@ -2068,6 +2068,8 @@ fn som_indices_count_earlier_same_named_siblings() {
     assert_eq!((0..=children.len()).map(|i| sibs.at(i)).collect::<Vec<_>>(), [0, 0, 1, 0, 2, 1, 0]);
 }
 
+/// `<bind match="none|global|dataRef" ref=…>` decides the data node an object reads, writes and
+/// repeats on, for every ref form PdfCraft follows; the ones it does not bind by name and warn.
 #[test]
 fn explicit_bindings_find_their_data_nodes() {
     let form = layout_xml(&bound_template()).unwrap();
@@ -2173,6 +2175,8 @@ fn explicit_bindings_find_their_data_nodes() {
     );
 }
 
+/// `keep next`/`previous` move a heading to the next content area with what it is kept with,
+/// and `keep intact` moves a subform whole rather than splitting it.
 #[test]
 fn keep_rules_hold_a_heading_with_what_follows_and_a_subform_whole() {
     let page_set = r##"<pageSet><pageArea name="p"><occur max="-1"/><contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/><medium short="8.5in" long="11in"/></pageArea></pageSet>"##;
@@ -2222,6 +2226,9 @@ fn keep_rules_hold_a_heading_with_what_follows_and_a_subform_whole() {
     assert_eq!(texts(&f.pages[1]), ["From", "To", "pair one", "pair two"], "{:?}", texts(&f.pages[1]));
 }
 
+/// A script hiding `row[1]` hides that instance alone: the template's row stays visible for
+/// the others, an invisible instance keeps its space, and a template-hidden repeater is shown
+/// instance by instance.
 #[test]
 fn hiding_one_instance_of_a_repeating_subform_hides_only_that_one() {
     let data = "<form><page1><table><row><amount>1</amount></row><row><amount>2</amount></row><row><amount>3</amount></row></table></page1></form>";
@@ -2342,6 +2349,38 @@ fn repeating_subforms_laid_out_as_blocks_are_shown_instance_by_instance() {
     assert!((y_of(&ov, ".grand[0]") - grand).abs() < 0.5);
 }
 
+/// Taking an instance out of a repeating subform drops its overrides and renumbers the ones on
+/// the instances after it, in every map, leaving other subforms' alone.
+#[test]
+fn removing_an_instance_renumbers_the_overrides_after_it() {
+    let mut ov = Overrides::default();
+    for (i, p) in ["visible", "hidden", "invisible", "visible"].iter().enumerate() {
+        ov.presence.insert(format!("form[0].t[0].row[{i}]"), p.to_string());
+    }
+    ov.access.insert("form[0].t[0].row[2].amount[0]".into(), "readOnly".into());
+    ov.values.insert("form[0].t[0].row[10].note[0]".into(), "ten".into());
+    ov.values.insert("form[0].t[0].rows[1]".into(), "another subform".into());
+    ov.presence.insert("form[0].u[0].row[1]".into(), "hidden".into());
+    assert!(ov.remove_instance("form[0].t[0]", "row", 1));
+    let p = |ov: &Overrides, k: &str| ov.presence.get(k).cloned();
+    assert_eq!(p(&ov, "form[0].t[0].row[0]").as_deref(), Some("visible"));
+    assert_eq!(p(&ov, "form[0].t[0].row[1]").as_deref(), Some("invisible"), "{ov:?}");
+    assert_eq!(p(&ov, "form[0].t[0].row[2]").as_deref(), Some("visible"));
+    assert_eq!(p(&ov, "form[0].t[0].row[3]"), None);
+    assert_eq!(ov.access.get("form[0].t[0].row[1].amount[0]").map(String::as_str), Some("readOnly"));
+    assert_eq!(ov.access.len(), 1);
+    assert_eq!(ov.values.get("form[0].t[0].row[9].note[0]").map(String::as_str), Some("ten"));
+    assert_eq!(ov.values.get("form[0].t[0].rows[1]").map(String::as_str), Some("another subform"));
+    assert_eq!(p(&ov, "form[0].u[0].row[1]").as_deref(), Some("hidden"));
+    // Past the last instance with an override there is nothing to do; before it, the rest move.
+    assert!(!ov.remove_instance("form[0].t[0]", "row", 20));
+    assert!(ov.remove_instance("form[0].t[0]", "row", 7));
+    assert_eq!(ov.values.get("form[0].t[0].row[8].note[0]").map(String::as_str), Some("ten"));
+    assert!(!ov.remove_instance("x", "y", 0));
+}
+
+/// One `Binder` per layout: many fields bound `global` cost one walk of the data between
+/// them, not one each.
 #[test]
 fn global_bindings_do_not_walk_the_data_once_per_field() {
     // 1500 fields bound globally over 20000 data nodes: one index of the data, not a walk per

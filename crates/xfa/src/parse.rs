@@ -188,6 +188,7 @@ fn parse_keep(n: Option<XmlNode>) -> Keep {
 /// share a node with another). A `dataRef` without a `ref`, or with one that isn't followed,
 /// binds by name and is noted.
 fn scan_binds(sf: &Subform, warnings: &mut Vec<String>) -> (bool, bool) {
+    /// Folds one object's binding into `out`, noting a `dataRef` that binds by name.
     fn one(c: &Common, out: &mut (bool, bool), warnings: &mut Vec<String>) {
         match &c.bind {
             Bind::Once => {}
@@ -207,6 +208,7 @@ fn scan_binds(sf: &Subform, warnings: &mut Vec<String>) -> (bool, bool) {
             }
         }
     }
+    /// Folds every object under `ns` into `out`.
     fn nodes(ns: &[Node], out: &mut (bool, bool), warnings: &mut Vec<String>, depth: usize) {
         if depth > MAX_DEPTH {
             return;

@@ -366,8 +366,10 @@ impl<'a, 'b> Runner<'a, 'b> {
         if self.by_som.is_none() {
             let by_som = pdfcraft_xfa::fields_by_som(self.doc);
             let mut by_path: HashMap<pdfcraft_xfa::DataPath, Vec<String>> = HashMap::new();
+            // One binder for every widget: a `global` binding indexes the data once, not per widget.
+            let binder = pdfcraft_xfa::Binder::new(self.tpl, self.data.as_ref());
             for (som, name) in &by_som {
-                if let Some(path) = pdfcraft_xfa::data_path(self.tpl, self.data.as_ref(), som) {
+                if let Some(path) = binder.path(som) {
                     by_path.entry(path).or_default().push(name.clone());
                 }
             }
@@ -491,8 +493,13 @@ impl<'a, 'b> Runner<'a, 'b> {
                 // No data node: the overrides keep the value, so scripts read it back and it
                 // survives save and reopen; the live form takes it in place.
                 let text = pdfcraft_xfa::clip_value(&text);
-                if self.ov.values.get(som) != Some(&text) {
-                    self.ov.values.insert(som.to_string(), text.clone());
+                if self.ov.values.get(som).map_or("", String::as_str) != text {
+                    // Emptied, the field shows the template's default again, as with no entry.
+                    if text.is_empty() {
+                        self.ov.values.remove(som);
+                    } else {
+                        self.ov.values.insert(som.to_string(), text.clone());
+                    }
                     self.ov_dirty = true;
                     let refreshed = match self.cached.as_mut() {
                         Some(live) => pdfcraft_xfa::set_unbound_value(&mut live.root, self.tpl, som, &text).is_some(),
@@ -583,15 +590,26 @@ impl<'a, 'b> Runner<'a, 'b> {
         pdfcraft_forms::reset(self.doc, listed.as_deref()).map_err(|e| e.to_string())?;
         self.fields = None;
         let infos = self.fields().clone();
-        for (som, name) in &by_som {
-            if listed.as_ref().is_some_and(|l| !l.contains(name)) {
+        // The data node of each field reset (resolved with one binder before the data changes):
+        // `None` for one bound to nothing, whose value the overrides hold.
+        let binder = pdfcraft_xfa::Binder::new(self.tpl, self.data.as_ref());
+        let targets: Vec<(&String, &FieldInfo, Option<pdfcraft_xfa::DataPath>)> = by_som
+            .iter()
+            .filter(|(_, name)| listed.as_ref().is_none_or(|l| l.contains(name)))
+            .filter_map(|(som, name)| infos.get(name).map(|info| (som, info)))
+            .filter(|(_, info)| !matches!(info.kind, pdfcraft_forms::FieldKind::PushButton | pdfcraft_forms::FieldKind::Signature))
+            .map(|(som, info)| (som, info, binder.path(som)))
+            .collect();
+        drop(binder);
+        for (som, info, path) in targets {
+            let Some(path) = path else {
+                // Bound to nothing: back to the template's default, which the overrides' value hid.
+                if self.ov.values.remove(som).is_some() {
+                    self.ov_dirty = true;
+                    self.changes.values += 1;
+                }
                 continue;
-            }
-            let Some(info) = infos.get(name) else { continue };
-            if matches!(info.kind, pdfcraft_forms::FieldKind::PushButton | pdfcraft_forms::FieldKind::Signature) {
-                continue;
-            }
-            let Some(path) = pdfcraft_xfa::data_path(self.tpl, self.data.as_ref(), som) else { continue };
+            };
             let text = data_text(info);
             if self.data.as_ref().and_then(|d| d.text_at(&path)).unwrap_or("") != text {
                 self.data_op(pdfcraft_xfa::DataOp::Value { path, text });
@@ -668,11 +686,15 @@ impl<'a, 'b> Runner<'a, 'b> {
                         self.data_op(pdfcraft_xfa::DataOp::Instances { parent, name: data_name, count: (index + 1).max(have + 1) });
                     } else {
                         // The data holds every shown instance before one is taken out.
-                        counts.insert(key, have.saturating_sub(1));
+                        counts.insert(key.clone(), have.saturating_sub(1));
                         self.data_op(pdfcraft_xfa::DataOp::Instances { parent: parent.clone(), name: data_name.clone(), count: have });
                         let mut path = parent;
                         path.push((data_name, index));
                         self.data_op(pdfcraft_xfa::DataOp::Remove(path));
+                        // The instances after it shift down in the data: their overrides go with them.
+                        if self.ov.remove_instance(&key.0, &key.1, index) {
+                            self.ov_dirty = true;
+                        }
                     }
                     self.changes.rows += 1;
                     relayout = true;

@@ -4575,6 +4575,9 @@ fn xfa_rows_in_areas_are_laid_out_read_calculated_and_written_where_adobe_binds_
     assert_eq!((v2("days_2"), v2("rest")), ("2".into(), "29".into()));
 }
 
+/// Explicit bindings through the engine: typed and scripted values land on the bound data node
+/// and reach every field on it, a field bound to nothing keeps its value for scripts and saves,
+/// a repeater bound to nothing refuses instances, and hiding one row hides that row alone.
 #[test]
 fn explicit_bindings_and_per_instance_presence_hold_through_the_engine() {
     // `city` is bound to $record.address.city, `twin` to the node `name` has, `echo` (bound to
@@ -4648,6 +4651,70 @@ fn explicit_bindings_and_per_instance_presence_hold_through_the_engine() {
     assert_eq!(grand, Some(vec!["6".to_string()]), "a hidden row still holds its data, and the sum asks for every row");
     s.undo(id).unwrap();
     assert_eq!(amounts(&s), ["1", "2", "3"]);
+}
+
+/// Removing a row keeps the per-instance overrides on the rows after it: the data's siblings
+/// shift down when one is taken out, so a row hidden by a script stays the hidden one.
+#[test]
+fn removing_a_row_renumbers_the_overrides_on_the_rows_after_it() {
+    let data = "<form><page1><table><row><amount>1</amount></row><row><amount>2</amount></row><row><amount>3</amount></row></table></page1></form>";
+    let tpl = pdfcraft_xfa::fixtures::scripted_template()
+        .replace(
+            "</template>",
+            &format!("</template><xfa:datasets xmlns:xfa=\"http://www.xfa.org/schema/xfa-data/1.0/\"><xfa:data>{data}</xfa:data></xfa:datasets>"),
+        )
+        .replace(
+            r#"  <field name="addRow" "#,
+            r#"  <field name="hideRow" w="1in" h="0.3in"><ui><button/></ui><event activity="click"><script contentType="application/x-javascript">xfa.resolveNode("form.page1.table.row[1]").presence = "hidden";</script></event></field>
+  <field name="dropFirst" w="1in" h="0.3in"><ui><button/></ui><event activity="click"><script contentType="application/x-javascript">table._row.removeInstance(0);</script></event></field>
+  <field name="addRow" "#,
+        );
+    assert!(tpl.contains("dropFirst"), "the fixture was reshaped");
+    let mut s = Session::new().with_clock(|| 1_700_000_000);
+    let id = s.open("rows.pdf", None, Arc::new(pdfcraft_xfa::fixtures::shell(&tpl)), None).expect("opens");
+    let amounts = |s: &Session| s.get(id).unwrap().form.iter().filter(|f| f.name.starts_with("amount")).map(|f| f.value.join("")).collect::<Vec<_>>();
+    assert_eq!(amounts(&s), ["1", "2", "3"]);
+    let o = s.run_javascript(id, "", Some("hideRow")).unwrap();
+    assert_eq!(o.error, None, "{o:?}");
+    assert_eq!(amounts(&s), ["1", "3"]);
+    let o = s.run_javascript(id, "", Some("dropFirst")).unwrap();
+    assert_eq!(o.error, None, "{o:?}");
+    assert_eq!(amounts(&s), ["3"], "the first row went and the hidden one stays hidden: {:?}", s.take_js_output(id));
+    // The saved overrides moved with the row.
+    let cos = pdfcraft_cos::Document::open(s.save_bytes(id).unwrap()).unwrap();
+    let ov = pdfcraft_xfa::overrides(&cos);
+    assert_eq!(ov.presence.get("form[0].page1[0].table[0].row[0]").map(String::as_str), Some("hidden"), "{ov:?}");
+    assert_eq!(ov.presence.get("form[0].page1[0].table[0].row[1]"), None);
+    s.undo(id).unwrap();
+    assert_eq!(amounts(&s), ["1", "3"]);
+}
+
+/// `xfa.host.resetData` takes a field bound to no data node back to its default too: the value
+/// the overrides kept for it goes, so neither scripts nor the laid-out form see it again.
+#[test]
+fn reset_data_clears_what_a_field_bound_to_nothing_held() {
+    let tpl = pdfcraft_xfa::fixtures::bound_template().replace(
+        r#"  <field name="readNick" "#,
+        r#"  <field name="resetAll" w="1in" h="0.3in"><ui><button/></ui><event activity="click"><script contentType="application/x-javascript">xfa.host.resetData();</script></event></field>
+  <field name="readNick" "#,
+    );
+    assert!(tpl.contains("resetAll"), "the fixture was reshaped");
+    let mut s = Session::new().with_clock(|| 1_700_000_000);
+    let id = s.open("bound.pdf", None, Arc::new(pdfcraft_xfa::fixtures::shell(&tpl)), None).expect("opens");
+    let value = |s: &Session, n: &str| {
+        s.get(id).unwrap().form.iter().find(|f| f.name == n).map(|f| f.value.clone()).unwrap_or_else(|| panic!("no field {n}"))
+    };
+    s.apply(id, Edit::SetFieldValue { name: "nick".into(), value: FieldValue::Text("Annie".into()) }).unwrap();
+    s.apply(id, Edit::SetFieldValue { name: "city".into(), value: FieldValue::Text("Bergen".into()) }).unwrap();
+    assert_eq!((value(&s, "nick"), value(&s, "city")), (vec!["Annie".to_string()], vec!["Bergen".to_string()]));
+    let o = s.run_javascript(id, "", Some("resetAll")).unwrap();
+    assert_eq!(o.error, None, "{o:?}");
+    assert_eq!(value(&s, "nick"), vec!["n/a".to_string()], "{:?}", s.take_js_output(id));
+    assert!(value(&s, "city").concat().is_empty(), "{:?}", value(&s, "city"));
+    let o = s.run_javascript(id, "", Some("readNick")).unwrap();
+    assert_eq!(o.alerts, vec!["nick=n/a".to_string()], "{o:?}");
+    let cos = pdfcraft_cos::Document::open(s.save_bytes(id).unwrap()).unwrap();
+    assert!(pdfcraft_xfa::overrides(&cos).values.is_empty(), "{:?}", pdfcraft_xfa::overrides(&cos).values);
 }
 
 #[test]
