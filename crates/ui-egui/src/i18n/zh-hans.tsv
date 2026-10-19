@@ -2398,3 +2398,4 @@ animation effects	Off	关
 	Make properties default	将属性设为默认
 	Pages selected	选定的页面
 	Page properties	页面属性
+	macOS Spotlight may intercept {key}. Change its shortcut in System Settings → Keyboard → Keyboard Shortcuts → Spotlight.	macOS 的 Spotlight 可能会拦截 {key}。请在系统设置 → 键盘 → 键盘快捷键 → Spotlight 中更改其快捷键。
