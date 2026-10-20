@@ -13,7 +13,7 @@
 //!   `required`, `display`, `hidden`, `numItems`, `getItemAt`, `currentValueIndices`,
 //!   `isBoxChecked`, `checkThisBox`, `exportValues`, `charLimit`, `textColor`, `fillColor`,
 //!   `setFocus`.
-//! - `app` (`alert`, `beep`, `response`, `launchURL`, `viewerType`, `viewerVersion`,
+//! - `app` (`alert`, `beep`, `response`, `launchURL`, `execMenuItem`, `viewerType`, `viewerVersion`,
 //!   `platform`, `setTimeOut`), `util` (`printf`, `printd`, `printx`), `console` (`println`,
 //!   `show`, `clear`), `display` and `color`.
 //!
@@ -159,6 +159,32 @@ pub enum Request {
     Beep,
     /// `app.execMenuItem("SaveAs")` (XFA forms' Save buttons).
     SaveAs,
+    /// `app.execMenuItem("ShowHide…")`: show the side panel, or hide it when it is showing.
+    ShowPanel(Panel),
+}
+
+/// A side panel a script can show or hide (`app.execMenuItem("ShowHideFileAttachment")`, …).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Panel {
+    Bookmarks,
+    /// Page thumbnails.
+    Pages,
+    Attachments,
+    Signatures,
+    Layers,
+}
+
+impl Panel {
+    /// The panel's name in automation output, fixed whatever the variant is called.
+    pub fn id(self) -> &'static str {
+        match self {
+            Panel::Bookmarks => "bookmarks",
+            Panel::Pages => "pages",
+            Panel::Attachments => "attachments",
+            Panel::Signatures => "signatures",
+            Panel::Layers => "layers",
+        }
+    }
 }
 
 /// What running a script did.
@@ -565,6 +591,33 @@ fn launch_url(_: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsVa
     Ok(JsValue::undefined())
 }
 
+/// What `app.execMenuItem(name)` asks for, for the menu items forms use: the side panels, Print
+/// and Save As. Other items do nothing.
+pub(crate) fn menu_item(name: &str) -> Option<Request> {
+    Some(match name {
+        "ShowHideFileAttachment" => Request::ShowPanel(Panel::Attachments),
+        "ShowHideBookmarks" => Request::ShowPanel(Panel::Bookmarks),
+        "ShowHideThumbnails" => Request::ShowPanel(Panel::Pages),
+        "ShowHideSignatures" => Request::ShowPanel(Panel::Signatures),
+        "ShowHideOptCont" => Request::ShowPanel(Panel::Layers),
+        "Print" => Request::Print,
+        // Save opens Save As too, as it always has for XFA forms' buttons: a click on a form
+        // never overwrites the file unasked.
+        "SaveAs" | "Save" => Request::SaveAs,
+        _ => return None,
+    })
+}
+
+/// `app.execMenuItem(name)`: queues the request [`menu_item`] gives for the name (Save opens
+/// Save As too); an unknown name does nothing.
+fn exec_menu_item(_: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let item = text(&arg(args, 0), ctx)?;
+    if let Some(r) = menu_item(&item) {
+        host(ctx)?.borrow_mut().requests.push(r);
+    }
+    Ok(JsValue::undefined())
+}
+
 fn response(_: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
     // No one to answer: as if the dialog was cancelled.
     Ok(JsValue::null())
@@ -890,6 +943,9 @@ fn color_object(ctx: &mut Context) -> JsObject {
     o.build()
 }
 
+/// Installs the form object model's globals: the document's functions and properties
+/// (`getField`, `numFields`, `pageNum`, `info`, …), `app`, `util`, `console`, `display` and
+/// `color`.
 fn install(ctx: &mut Context) -> JsResult<()> {
     let globals: [(&str, usize, NativeFunction); 9] = [
         ("getField", 1, NativeFunction::from_fn_ptr(get_field)),
@@ -931,6 +987,7 @@ fn install(ctx: &mut Context) -> JsResult<()> {
         .function(NativeFunction::from_fn_ptr(beep), js_string!("beep"), 0)
         .function(NativeFunction::from_fn_ptr(response), js_string!("response"), 1)
         .function(NativeFunction::from_fn_ptr(launch_url), js_string!("launchURL"), 2)
+        .function(NativeFunction::from_fn_ptr(exec_menu_item), js_string!("execMenuItem"), 1)
         .function(NativeFunction::from_fn_ptr(timer), js_string!("setTimeOut"), 2)
         .function(NativeFunction::from_fn_ptr(timer), js_string!("setInterval"), 2)
         .function(NativeFunction::from_fn_ptr(noop), js_string!("clearTimeOut"), 1)

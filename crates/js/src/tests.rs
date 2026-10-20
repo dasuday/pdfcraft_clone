@@ -1132,3 +1132,49 @@ mod session {
         assert!(o.abandoned || o.error.as_deref().is_some_and(|e| e.contains("too long")), "{o:?}");
     }
 }
+
+mod menu_items {
+    use super::*;
+    use crate::xfa::{XfaDoc, XfaEffect, XfaEvent, run_xfa};
+
+    /// Every side panel has a fixed id in automation output.
+    #[test]
+    fn each_panel_has_a_fixed_id_for_automation() {
+        let ids = [Panel::Bookmarks, Panel::Pages, Panel::Attachments, Panel::Signatures, Panel::Layers].map(Panel::id);
+        assert_eq!(ids, ["bookmarks", "pages", "attachments", "signatures", "layers"]);
+    }
+
+    /// Each side panel item, Print and SaveAs make their request, in order; an unknown item
+    /// makes none and is not an error.
+    #[test]
+    fn exec_menu_item_shows_side_panels_prints_and_saves() {
+        let o = go(
+            "app.execMenuItem('ShowHideFileAttachment'); app.execMenuItem('ShowHideBookmarks'); app.execMenuItem('ShowHideThumbnails'); \
+             app.execMenuItem('ShowHideSignatures'); app.execMenuItem('ShowHideOptCont'); app.execMenuItem('Print'); \
+             app.execMenuItem('SaveAs'); app.execMenuItem('NoSuchItem');",
+            &Event::field("Mouse Up", "total", ""),
+        );
+        assert_eq!(o.error, None);
+        assert_eq!(
+            o.requests,
+            [
+                Request::ShowPanel(Panel::Attachments),
+                Request::ShowPanel(Panel::Bookmarks),
+                Request::ShowPanel(Panel::Pages),
+                Request::ShowPanel(Panel::Signatures),
+                Request::ShowPanel(Panel::Layers),
+                Request::Print,
+                Request::SaveAs,
+            ]
+        );
+    }
+
+    /// `app.execMenuItem` works in XFA scripts too: a click shows the attachments panel.
+    #[test]
+    fn xfa_scripts_show_the_attachments_panel() {
+        let event = XfaEvent { activity: "click".into(), target: "form1[0].page1[0].go[0]".into(), ..Default::default() };
+        let o = run_xfa("app.execMenuItem('ShowHideFileAttachment')", &event, &XfaDoc::default(), &super::xfa_model::form(), Limits::default());
+        assert_eq!(o.error, None, "{o:?}");
+        assert!(o.effects.contains(&XfaEffect::ShowPanel(Panel::Attachments)), "{:?}", o.effects);
+    }
+}

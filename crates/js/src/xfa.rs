@@ -112,6 +112,8 @@ pub enum XfaEffect {
     MessageBox(String),
     /// `xfa.host.resetData()`: the named fields, or every field when empty.
     ResetData(Vec<String>),
+    /// `app.execMenuItem("ShowHide…")`: show or hide a side panel.
+    ShowPanel(crate::Panel),
     Print,
     SaveAs,
     LaunchUrl(String),
@@ -1047,11 +1049,14 @@ fn set_focus(_: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsVal
     Ok(JsValue::undefined())
 }
 
+/// `app.execMenuItem(name)`: the effect for the request the shared menu table gives the name
+/// (Save opens Save As too); an unknown name does nothing.
 fn exec_menu_item(_: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let item = text(&arg(args, 0), ctx)?;
-    match item.as_str() {
-        "SaveAs" | "Save" => effect(ctx, XfaEffect::SaveAs)?,
-        "Print" => effect(ctx, XfaEffect::Print)?,
+    match crate::menu_item(&item) {
+        Some(crate::Request::SaveAs) => effect(ctx, XfaEffect::SaveAs)?,
+        Some(crate::Request::Print) => effect(ctx, XfaEffect::Print)?,
+        Some(crate::Request::ShowPanel(p)) => effect(ctx, XfaEffect::ShowPanel(p))?,
         _ => {}
     }
     Ok(JsValue::undefined())
