@@ -904,6 +904,9 @@ impl Layouter<'_> {
         size
     }
 
+    /// The size (width, height) of `node` within `avail_w`, uncached ([`Self::size_of`] caches it).
+    /// Without a width, a container, a text draw or a button is as wide as its content (at most
+    /// `avail_w`) and anything else takes `avail_w`; without a height, it is as tall as its content.
     fn measure(&self, node: &Node, avail_w: f64, ctx: &Ctx, depth: usize) -> (f64, f64) {
         let c = node.common();
         // The node's own SOM: its repeating children count their instances under it, and a
@@ -912,7 +915,8 @@ impl Layouter<'_> {
         let ctx = ctx.with_som(c, 0);
         let som = ctx.som.clone();
         // A container without a width is as wide as its content (a radio group beside its
-        // question, say); a leaf without one takes what is available.
+        // question, say), and so is a text label or a button (as wide as its caption), within
+        // what is available; any other field without one takes what is available.
         let w = match c.w {
             Some(w) => w,
             None => match node {
@@ -920,7 +924,13 @@ impl Layouter<'_> {
                     let inner = (avail_w - c.margin.horizontal()).max(1.0);
                     (self.content_width(node, inner, &ctx, depth) + c.margin.horizontal()).min(avail_w)
                 }
-                Node::Field(_) | Node::Draw(_) => avail_w,
+                Node::Draw(d) => self.natural_width(&d.value, &ctx.font, &ctx.para).map_or(avail_w, |t| (t + c.margin.horizontal()).min(avail_w)),
+                Node::Field(f) if f.ui == Ui::Button => f
+                    .caption
+                    .as_ref()
+                    .and_then(|cap| self.natural_width(&cap.value, &ctx.font.apply(&cap.font), &ctx.para.apply(&cap.para)))
+                    .map_or(avail_w, |t| (t + c.margin.horizontal() + f.ui_margin.horizontal()).min(avail_w)),
+                Node::Field(_) => avail_w,
             },
         };
         let w = clamp_opt(w, c.min_w, c.max_w);
@@ -1004,6 +1014,17 @@ impl Layouter<'_> {
         }
     }
 
+    /// How wide text `v` is unwrapped, in `font` and `para`, with a hair to spare so that laying
+    /// it out at that width keeps it on its lines; `None` for what isn't text.
+    fn natural_width(&self, v: &Value, font: &Font, para: &Para) -> Option<f64> {
+        let rich = match v {
+            Value::Text(t) => text::plain(t),
+            Value::Rich(r) => r.clone(),
+            _ => return None,
+        };
+        Some(text::natural_width(&rich, para, &Face::of(font), &|id| self.embed(id)) + 0.01)
+    }
+
     fn value_height(&self, v: &Value, w: f64, ctx: &Ctx) -> f64 {
         match v {
             Value::Text(t) => text::measure_height(&text::plain(t), w, &ctx.para, &Face::of(&ctx.font), &|id| self.embed(id)),
@@ -1037,11 +1058,26 @@ impl Layouter<'_> {
         Some((placement, reserve))
     }
 
+    /// The height of field `f`'s content within `inner_w` (inside its margins): its widget (a check
+    /// box, a button's caption, or one line of text or three when multi-line, more for a text field
+    /// that grows) plus a caption above or below it, or the taller of the two for one beside it.
     fn field_height(&self, f: &Field, inner_w: f64, ctx: &Ctx) -> f64 {
         let font = ctx.font.apply(&f.common.font);
         let lines = if f.multiline { 3.0 } else { 1.0 };
         let ui = match f.ui {
             Ui::CheckButton => f.check_size.unwrap_or(10.0).max(text::line_height(font.size)),
+            // A button shows its caption: as tall as the caption's text in its own font.
+            Ui::Button if f.caption.as_ref().is_some_and(|c| !c.value.is_empty()) => {
+                let cap = f.caption.as_ref().map_or(0.0, |c| {
+                    let rich = match &c.value {
+                        Value::Rich(r) => r.clone(),
+                        other => text::plain(&other.plain().unwrap_or_default()),
+                    };
+                    let w = (inner_w - f.ui_margin.horizontal()).max(1.0);
+                    text::measure_height(&rich, w, &ctx.para.apply(&c.para), &Face::of(&ctx.font.apply(&c.font)), &|id| self.embed(id))
+                });
+                cap + f.ui_margin.vertical()
+            }
             _ => (text::line_height(font.size) * lines).max(self.grown_text_height(f, inner_w, ctx)) + 4.0 + f.ui_margin.vertical(),
         };
         match self.caption_reserve(f, inner_w, ctx) {
@@ -1456,6 +1492,9 @@ impl Layouter<'_> {
         if *n == 1 { base } else { format!("{base}_{n}") }
     }
 
+    /// Draw field `f` at `rect`: its border (a button's is its widget's box), its caption, then its
+    /// widget, or its value as plain text when it is non-interactive, a barcode, or a text field
+    /// taller than its content area. `radio` is set for a group's radio button; `sib` is its SOM index.
     fn draw_field(
         &mut self,
         f: &Field,
@@ -1632,13 +1671,13 @@ impl Layouter<'_> {
             }
             Ui::Button => {
                 let caption = f.caption.as_ref().and_then(|c| c.value.plain()).unwrap_or_default().trim().to_string();
-                // A button's box is its field border; without one it is invisible (a link
-                // over text, say).
+                // A button's box is its field border, around the whole field (its margins pad
+                // the caption, not the box); without one it is invisible (a link over text, say).
                 let border = match &f.common.border {
                     Some(b) => widget_border(Some(b), false),
                     None => WidgetBorder { color: None, fill: None, shape: BorderShape::None, width: 0.0 },
                 };
-                (WidgetKind::Button { caption }, ui, border, None, f.tooltip.clone())
+                (WidgetKind::Button { caption }, rect, border, None, f.tooltip.clone())
             }
             Ui::DateTimeEdit => {
                 let pattern = date_pattern(f.picture.as_deref());
