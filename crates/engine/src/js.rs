@@ -111,10 +111,25 @@ pub struct JsRunner {
 }
 
 impl JsRunner {
-    pub fn new(cos: &pdfcraft_cos::Document, file_name: &str) -> JsRunner {
-        let doc = pdfcraft_js::DocInfo { file_name: file_name.to_string(), num_pages: pdfcraft_model::pages(cos).len(), page: 0, info: info(cos) };
+    /// `highlight`: whether the viewer highlights form fields (`app.runtimeHighlight`).
+    pub fn new(cos: &pdfcraft_cos::Document, file_name: &str, highlight: bool) -> JsRunner {
+        let doc = pdfcraft_js::DocInfo {
+            file_name: file_name.to_string(),
+            num_pages: pdfcraft_model::pages(cos).len(),
+            page: 0,
+            info: info(cos),
+            highlight,
+        };
         JsRunner { doc, doc_scripts: pdfcraft_forms::document_scripts(cos), output: JsOutput::default(), cos: cos.clone() }
     }
+}
+
+/// The field highlight the last of `requests` that sets it asks for (`app.runtimeHighlight`).
+fn last_highlight(requests: &[Request]) -> Option<bool> {
+    requests.iter().rev().find_map(|r| match r {
+        Request::Highlight(on) => Some(*on),
+        _ => None,
+    })
 }
 
 /// The Info dictionary as `this.info` keys (lower-case).
@@ -129,11 +144,17 @@ fn info(cos: &pdfcraft_cos::Document) -> Vec<(String, String)> {
 }
 
 impl Scripts for JsRunner {
+    /// Run a field's `event` script on `target` with the fields as they are, keeping what it
+    /// printed or asked for; a failing script leaves the value as it was.
     fn run(&mut self, event: FieldEvent, script: &str, target: &Field, value: &str, fields: &[Field]) -> ScriptResult {
         let states: Vec<_> = fields.iter().map(|f| field_state(&self.cos, f)).collect();
         let ev = pdfcraft_js::Event::field(event.name(), &target.name, value);
         let o = pdfcraft_js::run(script, &ev, &self.doc, &states, &self.doc_scripts, Limits::default());
         self.output.absorb(&o);
+        // The edit's later scripts read the field highlight this one set.
+        if let Some(on) = last_highlight(&o.requests) {
+            self.doc.highlight = on;
+        }
         if o.error.is_some() {
             // As in Acrobat, a failing script leaves the value alone (the error goes to the console).
             return ScriptResult { rc: true, value: value.to_string(), changes: Vec::new(), message: None };
@@ -171,13 +192,36 @@ impl Session {
         self.js_off = !on;
     }
 
+    /// Whether JavaScript is on (Preferences ▸ JavaScript ▸ Enable Acrobat JavaScript).
     pub fn javascript(&self) -> bool {
         !self.js_off
+    }
+
+    /// Whether the viewer highlights form fields (Highlight fields), which forms' scripts read as
+    /// `app.runtimeHighlight`. A script that changes it asks for [`Request::Highlight`]; the
+    /// viewer then calls this with the new setting.
+    pub fn set_field_highlight(&mut self, on: bool) {
+        self.field_highlight = on;
     }
 
     /// What scripts printed or asked for since the last call (alerts, console, print, …).
     pub fn take_js_output(&mut self, id: DocId) -> JsOutput {
         self.docs.iter_mut().find(|d| d.id == id).map(|d| std::mem::take(&mut d.js_output)).unwrap_or_default()
+    }
+
+    /// The last field-highlight change (`app.runtimeHighlight`) scripts asked for in document
+    /// `id`, taken out of its waiting output; the rest stays for [`Session::take_js_output`].
+    pub fn take_js_highlight(&mut self, id: DocId) -> Option<bool> {
+        let doc = self.docs.iter_mut().find(|d| d.id == id)?;
+        let mut last = None;
+        doc.js_output.requests.retain(|r| match r {
+            Request::Highlight(on) => {
+                last = Some(*on);
+                false
+            }
+            _ => true,
+        });
+        last
     }
 
     /// Run `script` in document `id`, for a button (`target`: the field, event "Mouse Up") or
@@ -205,7 +249,7 @@ impl Session {
                 ..Default::default()
             });
         }
-        let runner = JsRunner::new(&cos, &doc.name);
+        let runner = JsRunner::new(&cos, &doc.name, self.field_highlight);
         let fields = pdfcraft_forms::fields(&cos);
         let states: Vec<_> = fields.iter().map(|f| field_state(&cos, f)).collect();
         let event = match target {
@@ -224,6 +268,10 @@ impl Session {
             })
             .collect();
         o.requests.retain(|r| !matches!(r, Request::Reset(_)));
+        // The calculations the script's changes set off read the field highlight it asked for.
+        if let Some(on) = last_highlight(&o.requests) {
+            self.field_highlight = on;
+        }
         let mut edits = Vec::new();
         if !changes.is_empty() {
             edits.push(Edit::ApplyScriptChanges { changes });

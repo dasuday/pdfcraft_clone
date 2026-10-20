@@ -84,6 +84,8 @@ pub struct XfaDoc {
     /// The current page, 0-based.
     pub page: usize,
     pub page_count: usize,
+    /// Whether the viewer highlights form fields (`app.runtimeHighlight`).
+    pub highlight: bool,
 }
 
 /// Something a script changed or asked for.
@@ -121,6 +123,8 @@ pub enum XfaEffect {
     Recalculate,
     /// `xfa.form.remerge()`, `xfa.layout.relayout()`.
     Relayout,
+    /// `app.runtimeHighlight = on`.
+    Highlight(bool),
 }
 
 /// What running a script did.
@@ -1000,6 +1004,22 @@ fn effect(ctx: &mut Context, e: XfaEffect) -> JsResult<()> {
     Ok(())
 }
 
+/// `app.runtimeHighlight`: whether the viewer highlights form fields.
+fn runtime_highlight(_: &JsValue, _: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    Ok(JsValue::from(host(ctx)?.borrow().doc.highlight))
+}
+
+/// `app.runtimeHighlight = on`: asks the viewer to highlight form fields, or to stop.
+fn set_runtime_highlight(_: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let on = arg(args, 0).to_boolean();
+    let mut h = host(ctx)?.borrow_mut();
+    if h.doc.highlight != on {
+        h.doc.highlight = on;
+        h.push(XfaEffect::Highlight(on));
+    }
+    Ok(JsValue::undefined())
+}
+
 fn message_box(_: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let m = clip(text(&arg(args, 0), ctx)?);
     effect(ctx, XfaEffect::MessageBox(m))?;
@@ -1098,6 +1118,8 @@ fn xfa_resolve(ctx: &mut Context, many: bool) -> JsResult<JsValue> {
     resolver(ctx, current, many)
 }
 
+/// The XFA object model as globals for one script: `xfa` (form, host, layout, event), `event`
+/// (the same object as `xfa.event`), `this` as node `current`, `app`, `console` and `util`.
 fn install(ctx: &mut Context, event: &XfaEvent, doc: &XfaDoc, current: usize) -> JsResult<()> {
     let rw = Attribute::CONFIGURABLE;
     let form = node_object(ctx, 0)?;
@@ -1180,7 +1202,10 @@ fn install(ctx: &mut Context, event: &XfaEvent, doc: &XfaDoc, current: usize) ->
     ctx.register_global_property(js_string!("xfa"), xfa, rw)?;
     ctx.register_global_property(js_string!("event"), ev, rw)?;
     ctx.register_global_property(js_string!("__xfa_this"), this_node, rw)?;
+    let highlight_get = function(ctx, NativeFunction::from_fn_ptr(runtime_highlight));
+    let highlight_set = function(ctx, NativeFunction::from_fn_ptr(set_runtime_highlight));
     let app = ObjectInitializer::new(ctx)
+        .accessor(js_string!("runtimeHighlight"), Some(highlight_get), Some(highlight_set), rw)
         .function(NativeFunction::from_fn_ptr(message_box), js_string!("alert"), 4)
         .function(NativeFunction::from_fn_ptr(beep), js_string!("beep"), 1)
         .function(NativeFunction::from_fn_ptr(response), js_string!("response"), 1)

@@ -15,8 +15,9 @@ fn fields() -> Vec<FieldState> {
     ]
 }
 
+/// The document these tests' scripts run in.
 fn doc() -> DocInfo {
-    DocInfo { file_name: "order.pdf".into(), num_pages: 3, page: 0, info: vec![("title".into(), "Order".into())] }
+    DocInfo { file_name: "order.pdf".into(), num_pages: 3, page: 0, info: vec![("title".into(), "Order".into())], highlight: false }
 }
 
 fn go(script: &str, event: &Event) -> Outcome {
@@ -380,9 +381,10 @@ mod xfa_model {
         }
     }
 
+    /// Run JavaScript `script` as `target`'s `activity` script on [`form`].
     fn go(script: &str, target: &str, activity: &str) -> XfaOutcome {
         let ev = XfaEvent { activity: activity.into(), target: target.into(), ..Default::default() };
-        let doc = XfaDoc { file_name: "f.pdf".into(), page: 1, page_count: 3 };
+        let doc = XfaDoc { file_name: "f.pdf".into(), page: 1, page_count: 3, ..Default::default() };
         run_xfa(script, &ev, &doc, &form(), Limits::default())
     }
 
@@ -594,9 +596,10 @@ mod formcalc {
     use crate::formcalc::run_formcalc;
     use crate::xfa::*;
 
+    /// Run FormCalc `script` as `target`'s `activity` script on [`form`].
     fn go(script: &str, target: &str, activity: &str) -> XfaOutcome {
         let ev = XfaEvent { activity: activity.into(), target: target.into(), ..Default::default() };
-        let doc = XfaDoc { file_name: "f.pdf".into(), page: 1, page_count: 3 };
+        let doc = XfaDoc { file_name: "f.pdf".into(), page: 1, page_count: 3, ..Default::default() };
         run_formcalc(script, &ev, &doc, &form(), Limits::default())
     }
 
@@ -1110,6 +1113,8 @@ mod session {
         assert_eq!(s.dead(), None);
     }
 
+    /// A JavaScript script past its time is abandoned within the deadline, and the session runs
+    /// nothing after it; a FormCalc one stops itself or is abandoned too.
     #[test]
     fn a_script_past_its_time_is_abandoned_and_the_session_is_dead_after_it() {
         let mut s = XfaSession::new(XfaDoc::default());
@@ -1130,5 +1135,39 @@ mod session {
         slow.timeout = std::time::Duration::from_millis(200);
         let o = s.run(slow);
         assert!(o.abandoned || o.error.as_deref().is_some_and(|e| e.contains("too long")), "{o:?}");
+    }
+}
+
+mod runtime_highlight {
+    use super::*;
+    use crate::xfa::{XfaDoc, XfaEffect, XfaEvent, XfaNode, run_xfa};
+
+    /// `app.runtimeHighlight` in AcroForm scripts reads the viewer's setting, and setting it asks
+    /// for the change once and reads back the new value.
+    #[test]
+    fn app_runtime_highlight_reads_the_viewers_setting_and_asks_to_change_it() {
+        let ev = Event::field("Calculate", "total", "");
+        let on = DocInfo { highlight: true, ..doc() };
+        let o = run("event.value = String(app.runtimeHighlight);", &ev, &on, &fields(), &[], Limits::default());
+        assert_eq!((o.value.as_str(), o.requests.len()), ("true", 0));
+        let o = go("var was = app.runtimeHighlight; app.runtimeHighlight = true; event.value = was + ',' + app.runtimeHighlight;", &ev);
+        assert_eq!(o.error, None);
+        assert_eq!(o.value, "false,true", "the script reads back what it set");
+        assert_eq!(o.requests, vec![Request::Highlight(true)]);
+    }
+
+    /// The same in XFA scripts, where the change is an effect; nothing is asked for when the
+    /// setting is already what the script wants.
+    #[test]
+    fn xfa_app_runtime_highlight_reads_the_setting_and_records_a_change() {
+        let ev = XfaEvent { activity: "layoutReady".into(), target: "form1[0]".into(), ..Default::default() };
+        let root = XfaNode { name: "form1".into(), som: "form1[0]".into(), ..Default::default() };
+        let script = "var was = app.runtimeHighlight; if (!app.runtimeHighlight) { app.runtimeHighlight = true; } was + ',' + app.runtimeHighlight";
+        let o = run_xfa(script, &ev, &XfaDoc::default(), &root, Limits::default());
+        assert_eq!(o.error, None, "{o:?}");
+        assert_eq!(o.result.as_deref(), Some("false,true"));
+        assert_eq!(o.effects, vec![XfaEffect::Highlight(true)]);
+        let o = run_xfa(script, &ev, &XfaDoc { highlight: true, ..Default::default() }, &root, Limits::default());
+        assert_eq!((o.result.as_deref(), o.effects.len()), (Some("true,true"), 0), "already on: nothing to ask for");
     }
 }

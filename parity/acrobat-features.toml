@@ -4392,8 +4392,8 @@ milestone = "M3"
 status = "shipped"
 commands = []
 tools = []
-evidence = ["crates/ui-egui/tests/view.rs::highlight_fields_tints_the_field_area", "crates/ui-egui/tests/view.rs::required_radio_buttons_get_a_round_red_border", "crates/ui-egui/tests/view.rs::field_highlighting_is_remembered", "crates/ui-egui/tests/editing.rs::a_secured_form_shows_its_form_notice_and_its_security"]
-notes = "offered on secured forms too; remembered for the next document and session; required fields get a red border (round for radio buttons); the tint is drawn over the field, where Acrobat paints the highlight colour behind it"
+evidence = ["crates/ui-egui/tests/view.rs::highlight_fields_tints_the_field_area", "crates/ui-egui/tests/view.rs::required_radio_buttons_get_a_round_red_border", "crates/ui-egui/tests/view.rs::field_highlighting_is_remembered", "crates/ui-egui/tests/ui_group/xfa.rs::a_form_that_turns_field_highlighting_on_gets_it", "crates/engine/src/tests.rs::a_forms_layout_ready_scripts_run_once_it_is_laid_out", "crates/ui-egui/tests/editing.rs::a_secured_form_shows_its_form_notice_and_its_security"]
+notes = "a form's scripts read and set it as app.runtimeHighlight (XFA forms usually in layout:ready, which runs once on opening), and a setting they make carries over as the button's does; offered on secured forms too; remembered for the next document and session; required fields get a red border (round for radio buttons); the tint is drawn over the field, where Acrobat paints the highlight colour behind it"
 
 [[feature]]
 id = "form.field-appearance-display"
