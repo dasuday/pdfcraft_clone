@@ -15,7 +15,7 @@ use boa_engine::object::builtins::{JsArray, JsProxy};
 use boa_engine::property::Attribute;
 use boa_engine::{Context, JsObject, JsResult, JsString, JsValue, NativeFunction, Source, js_string};
 
-use crate::{Limits, arg, as_number, error, function, platform, printd, printf, printx, refuse, s, text};
+use crate::{Limits, arg, as_number, data_object, error, function, platform, printd, printf, printx, refuse, s, text};
 
 /// What kind of template object a node is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -112,6 +112,11 @@ pub enum XfaEffect {
     MessageBox(String),
     /// `xfa.host.resetData()`: the named fields, or every field when empty.
     ResetData(Vec<String>),
+    /// `event.target.exportDataObject(…)`: the attached file `name`, to open or to save.
+    OpenAttachment {
+        name: String,
+        open: bool,
+    },
     Print,
     SaveAs,
     LaunchUrl(String),
@@ -1000,6 +1005,13 @@ fn effect(ctx: &mut Context, e: XfaEffect) -> JsResult<()> {
     Ok(())
 }
 
+/// `event.target.exportDataObject(…)`: the document asks to open or save an attached file.
+fn export_data_object(_: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let (name, open) = data_object(args, ctx)?;
+    effect(ctx, XfaEffect::OpenAttachment { name, open })?;
+    Ok(JsValue::undefined())
+}
+
 fn message_box(_: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let m = clip(text(&arg(args, 0), ctx)?);
     effect(ctx, XfaEffect::MessageBox(m))?;
@@ -1098,6 +1110,9 @@ fn xfa_resolve(ctx: &mut Context, many: bool) -> JsResult<JsValue> {
     resolver(ctx, current, many)
 }
 
+/// Set up the object model for one script run from node `current`: `xfa` (with `xfa.event`, whose
+/// target is that node), a separate global `event` whose target is a document offering
+/// `exportDataObject`, `app`, `console`, `util`, and the nodes in scope under their own names.
 fn install(ctx: &mut Context, event: &XfaEvent, doc: &XfaDoc, current: usize) -> JsResult<()> {
     let rw = Attribute::CONFIGURABLE;
     let form = node_object(ctx, 0)?;
@@ -1142,24 +1157,33 @@ fn install(ctx: &mut Context, event: &XfaEvent, doc: &XfaDoc, current: usize) ->
         .function(NativeFunction::from_fn_ptr(zero), js_string!("pageSpan"), 1)
         .property(js_string!("ready"), JsValue::from(true), Attribute::READONLY)
         .build();
-    let ev = ObjectInitializer::new(ctx)
-        .property(js_string!("name"), s(&event.activity), Attribute::all())
-        .property(js_string!("newText"), s(&event.new_text), Attribute::all())
-        .property(js_string!("prevText"), s(&event.prev_text), Attribute::all())
-        .property(js_string!("fullText"), s(&event.new_text), Attribute::all())
-        .property(js_string!("change"), s(""), Attribute::all())
-        .property(js_string!("target"), this_node.clone(), Attribute::all())
-        .property(js_string!("selStart"), JsValue::from(0.0), Attribute::all())
-        .property(js_string!("selEnd"), JsValue::from(0.0), Attribute::all())
-        .property(js_string!("cancelAction"), JsValue::from(false), Attribute::all())
-        .property(js_string!("reenter"), JsValue::from(false), Attribute::all())
-        .property(js_string!("shift"), JsValue::from(false), Attribute::all())
-        .property(js_string!("modifier"), JsValue::from(false), Attribute::all())
-        .property(js_string!("keyDown"), JsValue::from(false), Attribute::all())
-        .property(js_string!("commitKey"), JsValue::from(0.0), Attribute::all())
-        .function(NativeFunction::from_fn_ptr(noop), js_string!("emit"), 0)
-        .function(NativeFunction::from_fn_ptr(noop), js_string!("reset"), 0)
-        .build();
+    // Two event objects, as in Acrobat's XFA scripting: `xfa.event`, whose target is the form
+    // node the event happened on, and Acrobat's own `event`, whose target is the document
+    // (`event.target.exportDataObject(…)` is how forms open their attached files).
+    let acrobat_doc =
+        ObjectInitializer::new(ctx).function(NativeFunction::from_fn_ptr(export_data_object), js_string!("exportDataObject"), 4).build();
+    let event_object = |ctx: &mut Context, target: JsValue| {
+        ObjectInitializer::new(ctx)
+            .property(js_string!("name"), s(&event.activity), Attribute::all())
+            .property(js_string!("newText"), s(&event.new_text), Attribute::all())
+            .property(js_string!("prevText"), s(&event.prev_text), Attribute::all())
+            .property(js_string!("fullText"), s(&event.new_text), Attribute::all())
+            .property(js_string!("change"), s(""), Attribute::all())
+            .property(js_string!("target"), target, Attribute::all())
+            .property(js_string!("selStart"), JsValue::from(0.0), Attribute::all())
+            .property(js_string!("selEnd"), JsValue::from(0.0), Attribute::all())
+            .property(js_string!("cancelAction"), JsValue::from(false), Attribute::all())
+            .property(js_string!("reenter"), JsValue::from(false), Attribute::all())
+            .property(js_string!("shift"), JsValue::from(false), Attribute::all())
+            .property(js_string!("modifier"), JsValue::from(false), Attribute::all())
+            .property(js_string!("keyDown"), JsValue::from(false), Attribute::all())
+            .property(js_string!("commitKey"), JsValue::from(0.0), Attribute::all())
+            .function(NativeFunction::from_fn_ptr(noop), js_string!("emit"), 0)
+            .function(NativeFunction::from_fn_ptr(noop), js_string!("reset"), 0)
+            .build()
+    };
+    let ev = event_object(ctx, this_node.clone());
+    let acrobat_ev = event_object(ctx, acrobat_doc.into());
     let datasets = ObjectInitializer::new(ctx).property(js_string!("data"), form.clone(), rw).build();
     let template = sink(ctx)?;
     let resolve_one = xfa_resolve(ctx, false)?;
@@ -1178,7 +1202,7 @@ fn install(ctx: &mut Context, event: &XfaEvent, doc: &XfaDoc, current: usize) ->
         .function(NativeFunction::from_fn_ptr(relayout), js_string!("remerge"), 0)
         .build();
     ctx.register_global_property(js_string!("xfa"), xfa, rw)?;
-    ctx.register_global_property(js_string!("event"), ev, rw)?;
+    ctx.register_global_property(js_string!("event"), acrobat_ev, rw)?;
     ctx.register_global_property(js_string!("__xfa_this"), this_node, rw)?;
     let app = ObjectInitializer::new(ctx)
         .function(NativeFunction::from_fn_ptr(message_box), js_string!("alert"), 4)

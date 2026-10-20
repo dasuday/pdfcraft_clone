@@ -1520,7 +1520,8 @@ impl PdfCraftApp {
         self.dialog_epoch
     }
 
-    /// Save an attachment to disk, or open a PDF attachment in a new tab.
+    /// Save an attachment to disk, or open a PDF attachment in a new tab (or go to the tab it is
+    /// already open in).
     pub fn attachment_action(&mut self, doc: DocId, index: usize, open: bool) {
         let Some(d) = self.session.get(doc) else { return };
         let Some(att) = d.info.attachments.get(index).cloned() else { return };
@@ -1529,7 +1530,15 @@ impl PdfCraftApp {
             (Err(e), _) => self.notify_fmt("Couldn't read {name}: {e}", &[("name", &att.name), ("e", &e.to_string())]),
             (Ok(bytes), true) => {
                 // The tab name later names files written from the tab (Split, Extract pages).
-                if let Err(e) = self.open_bytes(&crate::files::attachment_file_name(&att.name), None, bytes) {
+                let name = crate::files::attachment_file_name(&att.name);
+                // Already open: a tab of that name whose document starts with these bytes (a form
+                // laid out on open appends its layout to them).
+                let open_in = self.views.iter().position(|v| self.session.get(v.id).is_some_and(|t| t.name == name && t.bytes.starts_with(&bytes)));
+                if let Some(i) = open_in {
+                    self.active = Some(i);
+                    return;
+                }
+                if let Err(e) = self.open_bytes(&name, None, bytes) {
                     self.notify_fmt("Couldn't open {name}: {e}", &[("name", &att.name), ("e", &e.to_string())]);
                 }
             }

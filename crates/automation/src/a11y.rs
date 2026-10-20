@@ -646,6 +646,7 @@ impl Automation {
     }
 }
 
+/// A script's request to the viewer as `js_run` reports it in JSON (page numbers 1-based).
 fn request_json(r: &pdfcraft_engine::js::Request) -> Value {
     use pdfcraft_engine::js::Request as R;
     match r {
@@ -657,6 +658,7 @@ fn request_json(r: &pdfcraft_engine::js::Request) -> Value {
         R::Focus(f) => json!({ "focus": f }),
         R::Beep => json!({ "beep": true }),
         R::SaveAs => json!({ "save_as": true }),
+        R::OpenAttachment { name, open } => json!({ "attachment": name, "open": open }),
     }
 }
 

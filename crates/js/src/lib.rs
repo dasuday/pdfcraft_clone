@@ -8,7 +8,7 @@
 //! - `event`: `value`, `change`, `willCommit`, `rc`, `name`, `type`, `target`, `targetName`.
 //! - the document (`this`, also the global object): `getField`, `numFields`,
 //!   `getNthFieldName`, `numPages`, `pageNum`, `documentFileName`, `info`, `resetForm`,
-//!   `calculateNow`, `print`, `submitForm`, `mailDoc`.
+//!   `calculateNow`, `print`, `submitForm`, `mailDoc`, `exportDataObject`.
 //! - Field objects: `name`, `type`, `value`, `valueAsString`, `defaultValue`, `readonly`,
 //!   `required`, `display`, `hidden`, `numItems`, `getItemAt`, `currentValueIndices`,
 //!   `isBoxChecked`, `checkThisBox`, `exportValues`, `charLimit`, `textColor`, `fillColor`,
@@ -159,6 +159,12 @@ pub enum Request {
     Beep,
     /// `app.execMenuItem("SaveAs")` (XFA forms' Save buttons).
     SaveAs,
+    /// `this.exportDataObject(cName, …, nLaunch)`: the attached file `name`, to open (`nLaunch`
+    /// 1 or 2) or to save (0).
+    OpenAttachment {
+        name: String,
+        open: bool,
+    },
 }
 
 /// What running a script did.
@@ -565,6 +571,30 @@ fn launch_url(_: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsVa
     Ok(JsValue::undefined())
 }
 
+/// The attached file `exportDataObject` names, and whether to open it: from an object
+/// (`{cName, nLaunch}`) or from the arguments (`cName, cDIPath, bAllowAuth, nLaunch`). `nLaunch`
+/// 1 and 2 open the file, 0 (the default) saves it.
+pub(crate) fn data_object(args: &[JsValue], ctx: &mut Context) -> JsResult<(String, bool)> {
+    let first = arg(args, 0);
+    let name = message(&first, "cName", ctx)?;
+    if name.is_empty() {
+        return Err(error("exportDataObject needs cName, the attached file's name"));
+    }
+    let launch = match first.as_object() {
+        Some(o) if !o.is_array() && !o.is_callable() => o.get(js_string!("nLaunch"), ctx)?,
+        _ => arg(args, 3),
+    };
+    let launch = if launch.is_undefined() || launch.is_null() { 0.0 } else { launch.to_number(ctx)? };
+    Ok((name, launch.is_finite() && launch >= 1.0))
+}
+
+/// `this.exportDataObject(…)`: asks the viewer to open or save an attached file.
+fn export_data_object(_: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let (name, open) = data_object(args, ctx)?;
+    host(ctx)?.borrow_mut().requests.push(Request::OpenAttachment { name, open });
+    Ok(JsValue::undefined())
+}
+
 fn response(_: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
     // No one to answer: as if the dialog was cancelled.
     Ok(JsValue::null())
@@ -890,8 +920,10 @@ fn color_object(ctx: &mut Context) -> JsObject {
     o.build()
 }
 
+/// Register the document's methods and properties (`getField`, `exportDataObject`, `numPages`,
+/// `pageNum`, …) as globals, and the `app`, `util`, `console`, `display` and `color` objects.
 fn install(ctx: &mut Context) -> JsResult<()> {
-    let globals: [(&str, usize, NativeFunction); 9] = [
+    let globals: [(&str, usize, NativeFunction); 10] = [
         ("getField", 1, NativeFunction::from_fn_ptr(get_field)),
         ("getNthFieldName", 1, NativeFunction::from_fn_ptr(get_nth_field_name)),
         ("resetForm", 1, NativeFunction::from_fn_ptr(reset_form)),
@@ -901,6 +933,7 @@ fn install(ctx: &mut Context) -> JsResult<()> {
         ("calculateNow", 0, NativeFunction::from_fn_ptr(noop)),
         ("syncAnnotScan", 0, NativeFunction::from_fn_ptr(noop)),
         ("dirty", 0, NativeFunction::from_fn_ptr(noop)),
+        ("exportDataObject", 4, NativeFunction::from_fn_ptr(export_data_object)),
     ];
     for (name, len, f) in globals {
         ctx.register_global_callable(JsString::from(name), len, f)?;
